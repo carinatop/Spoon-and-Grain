@@ -1,0 +1,1398 @@
+{
+  "name": "Spoon and Grain",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "dac4ed17-fb78-4f4f-925d-11ed9f690728",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        16224,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "11oSqkJHG1R7_a8nxSC49QHpsw3Fx_DH3qHrhqCluOII",
+          "mode": "list",
+          "cachedResultName": "Spoon and Grain Articles",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/11oSqkJHG1R7_a8nxSC49QHpsw3Fx_DH3qHrhqCluOII/edit?usp=sharing"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/11oSqkJHG1R7_a8nxSC49QHpsw3Fx_DH3qHrhqCluOII/edit#gid=0"
+        },
+        "options": {
+          "dataLocationOnSheet": {
+            "values": {
+              "rangeDefinition": "specifyRangeA1",
+              "range": "A1:Z31"
+            }
+          }
+        }
+      },
+      "id": "0860fa37-460f-4e49-9bf2-e2fd467acd5d",
+      "name": "Get Config (Sheet1)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        16496,
+        8576
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "fqKjgyTQTOU1qChv",
+          "name": "Google Sheets account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const url = $json[\"DOCS URL\"];\nif (!url) throw new Error(\"DOCS URL missing\");\n\nconst match = String(url).match(/\\/document\\/d\\/([^\\/\\?]+)/);\nif (!match) throw new Error(\"Could not extract document ID\");\n\nreturn {\n  json: {\n    ...$json,\n    docId: match[1],\n  },\n};"
+      },
+      "id": "8fd8a98c-3c41-4022-8b04-2d9c817dc2c8",
+      "name": "Extract Doc ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16784,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://docs.googleapis.com/v1/documents/{{$json.docId}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleOAuth2Api",
+        "options": {}
+      },
+      "id": "2abe0635-6651-4b64-8af9-f4300f9b15a1",
+      "name": "Get Google Doc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        17056,
+        8576
+      ],
+      "executeOnce": false,
+      "credentials": {
+        "googleOAuth2Api": {
+          "id": "mAE8T50maQ8Ortkm",
+          "name": "Google account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function readText(el) {\n  return el?.textRun?.content ?? '';\n}\n\nconst out = [];\n\nfor (const item of $input.all()) {\n  const title = item.json.title ?? '';\n  const doc = item.json.body;\n  const blocks = [];\n\n  const content = doc?.content ?? [];\n  for (const c of content) {\n    const p = c.paragraph;\n    if (!p) continue;\n\n    const text = (p.elements ?? []).map(readText).join('').trim();\n    if (!text) continue;\n\n    const style = p.paragraphStyle?.namedStyleType;\n    const type =\n      style === 'HEADING_1' ? 'h1' :\n      style === 'HEADING_2' ? 'h2' :\n      style === 'HEADING_3' ? 'h3' : 'p';\n\n    blocks.push({ type, content: text });\n  }\n\n  const h1Block = blocks.find(b => b.type === 'h1');\n  const rawTitle = h1Block ? h1Block.content : (title || 'Untitled');\n  const finalTitle = rawTitle.replace(/\\w\\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());\n\n  out.push({\n    json: {\n      ...item.json,\n      title: finalTitle,\n      blocks,\n    },\n  });\n}\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        17344,
+        8576
+      ],
+      "id": "4316f3ab-e8bb-47a2-823c-a6818ff23100",
+      "name": "Convert Google Doc to Blocks"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "function titleCase(str = '') {\n  return str\n    .toLowerCase()\n    .split(/\\s+/)\n    .filter(Boolean)\n    .map(w => w.charAt(0).toUpperCase() + w.slice(1))\n    .join(' ');\n}\n\nfunction escapeHtml(s = '') {\n  return String(s)\n    .replaceAll('&', '&amp;')\n    .replaceAll('<', '&lt;')\n    .replaceAll('>', '&gt;')\n    .replaceAll('\"', '&quot;');\n}\n\nfunction splitIntoSentences(text = '') {\n  const input = String(text).replace(/\\s+/g, ' ').trim();\n  if (!input) return [];\n\n  if (typeof Intl !== 'undefined' && Intl.Segmenter) {\n    const seg = new Intl.Segmenter('en', { granularity: 'sentence' });\n    return Array.from(seg.segment(input))\n      .map(s => s.segment.trim())\n      .filter(Boolean);\n  }\n\n  const DOT = '\\u222f';\n  const NON_TERMINAL_ABBR = [\n    'Mr','Mrs','Ms','Dr','Prof','Sr','Jr','St','Mt','Capt','Lt','Col','Gen','Sgt','Rev','Hon',\n    'Gov','Sen','Rep','Pres','No','Fig','Dept','Univ','Inc','Ltd','Co','Corp',\n    'vs','etc','e.g','i.e',\n    'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Sept','Oct','Nov','Dec'\n  ];\n\n  let t = input;\n\n  for (const a of NON_TERMINAL_ABBR) {\n    const pattern = a.replace(/\\./g, '\\\\.');\n    const re = new RegExp(`\\\\b${pattern}\\\\.`, 'gi');\n    t = t.replace(re, (m) => m.replace(/\\./g, DOT));\n  }\n\n  t = t.replace(/\\b((?:[A-Za-z]\\.){2,}[A-Za-z])\\./g, (_, g1) => g1.replace(/\\./g, DOT) + '.');\n  t = t.replace(/(\\d)\\.(\\d)/g, `$1${DOT}$2`);\n\n  const parts = t.match(/.*?(?:[.!?]+(?:[\"'\\\"\\)\\\\]]+)?(?=\\s|$)|$)/g) || [];\n  return parts\n    .map(s => s.trim())\n    .filter(Boolean)\n    .map(s => s.replaceAll(DOT, '.'));\n}\n\nfunction removeToLearnMoreSentences(sentences) {\n  return sentences.filter(s => !/to learn more/i.test(s));\n}\n\nif (!Array.isArray($json.blocks)) {\n  throw new Error('Missing json.blocks from previous node.');\n}\n\nconst rawTitle = $json.title || 'Untitled';\nconst title = titleCase(rawTitle);\nconst blocks = $json.blocks;\n\nlet html = '';\n\nfor (const block of blocks) {\n  if (!block || !block.type) continue;\n\n  if (block.type === 'h1') {\n    continue;\n  }\n\n  if (block.type === 'h2') {\n    const h2 = escapeHtml(block.content || '');\n    const h2Raw = block.content || '';\n\n    html += `<!-- wp:heading -->\\n`;\n    html += `<h2 class=\"wp-block-heading\">${h2}</h2>\\n`;\n    html += `<!-- /wp:heading -->\\n\\n`;\n\n    html += `<!-- wp:html -->\\n`;\n    html += `<!-- UNSPLASH:START:${h2Raw} -->\\n`;\n    html += `<figure class=\"wp-block-image aligncenter size-full\">`;\n    html += `<img src=\"https://placehold.co/1200x700/e2e8f0/64748b?text=${encodeURIComponent(h2Raw)}\" alt=\"${h2}\" style=\"width:100%;height:auto;\" />`;\n    html += `<figcaption class=\"wp-element-caption\">Loading image...</figcaption>`;\n    html += `</figure>\\n`;\n    html += `<!-- UNSPLASH:END:${h2Raw} -->\\n`;\n    html += `<!-- /wp:html -->\\n\\n`;\n\n    continue;\n  }\n\n  if (block.type === 'p') {\n    let sentences = splitIntoSentences(block.content || '');\n    sentences = removeToLearnMoreSentences(sentences);\n\n    for (let i = 0; i < sentences.length; i += 2) {\n      const group = sentences.slice(i, i + 2).join(' ').trim();\n      if (!group) continue;\n\n      const p = escapeHtml(group);\n\n      html += `<!-- wp:paragraph -->\\n`;\n      html += `<p>${p}</p>\\n`;\n      html += `<!-- /wp:paragraph -->\\n\\n`;\n    }\n  }\n}\n\n\nreturn { json: { ...$json, html } };"
+      },
+      "id": "1a4cc9b3-4d14-4c48-8a09-b14594a47abc",
+      "name": "Build Gutenberg Blocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        17616,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://spoonandgrain.com/wp-json/wp/v2/posts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "context",
+              "value": "edit"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{$json.title}}"
+            },
+            {
+              "name": "content",
+              "value": "={{$json.html}}"
+            },
+            {
+              "name": "status",
+              "value": "draft"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d840eda6-59fa-4b42-ad96-ece44bc17080",
+      "name": "Create Draft Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        17904,
+        8576
+      ],
+      "credentials": {
+        "wordpressApi": {
+          "id": "Pa6V4FkHzOYkAAPx",
+          "name": "Wordpress account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract UNSPLASH markers AND section content from the draft post\n// Reads the paragraphs under each heading for smarter image search\nconst results = [];\n\nfor (const item of $input.all()) {\n  const content = item.json.content?.raw || item.json.content?.rendered || '';\n  const postId = String(item.json.id);\n  const postTitle = item.json.title?.rendered || item.json.title?.raw || 'Untitled';\n\n  // Extract section content per heading (text between h2 tags)\n  const sections = {};\n  const sectionRegex = /<h2[^>]*>(.*?)<\\/h2>([\\s\\S]*?)(?=<h2|$)/g;\n  let secMatch;\n  while ((secMatch = sectionRegex.exec(content)) !== null) {\n    const hText = secMatch[1].replace(/<[^>]*>/g, '').trim();\n    const body = secMatch[2]\n      .replace(/<!--[\\s\\S]*?-->/g, ' ')\n      .replace(/<[^>]*>/g, ' ')\n      .replace(/\\s+/g, ' ')\n      .trim();\n    if (hText) sections[hText] = body;\n  }\n\n  const markerRegex = /<!-- UNSPLASH:START:(.*?) -->/g;\n  const headers = [];\n  let match;\n\n  while ((match = markerRegex.exec(content)) !== null) {\n    const headerText = match[1].trim();\n    if (headerText) {\n      headers.push(headerText);\n    }\n  }\n\n  if (headers.length === 0) {\n    console.log('No UNSPLASH markers found in post ' + postId);\n    continue;\n  }\n\n  console.log(`Post ${postId}: Found ${headers.length} image slots`);\n\n  for (const heading of headers) {\n    const sectionContent = sections[heading] || '';\n    console.log(`  ${heading}: ${sectionContent.length} chars of section content`);\n    results.push({\n      json: {\n        postId,\n        postTitle,\n        postContent: content,\n        heading,\n        sectionContent,\n        searchQuery: heading\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  throw new Error('No UNSPLASH markers found in any post.');\n}\n\nreturn results;"
+      },
+      "id": "39fc041a-8b3a-46bb-8671-d423b0da9fc1",
+      "name": "Extract Headers from Draft",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        18176,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// GENERATE SEARCH QUERIES\n// Strict priority cascade: CATEGORY → TITLE → HEADING → SECTION CONTENT\n// Category sets visual style, title extracts food subject,\n// heading is the specific anchor, section content adds detail keywords\n\nconst results = [];\n\nconst STOP_WORDS = new Set([\n  'the','a','an','and','or','but','in','on','at','to','for','of','with',\n  'is','are','was','were','be','been','have','has','had','will','would',\n  'can','could','when','where','who','what','how','why','which','their',\n  'there','its','it','from','about','into','through','before','after',\n  'above','below','between','under','since','without','best','top',\n  'guide','tips','things','must','should','you','your','also','just',\n  'even','very','really','much','many','some','any','all','each','every',\n  'both','few','more','most','other','such','than','too','only','own',\n  'same','so','not','no','nor','do','does','did','here','then','now',\n  'out','up','down','off','over','well','back','still','way','may','get',\n  'make','take','come','look','see','know','think','want','need','find',\n  'like','time','people','day','good','new','first','last','long','great',\n  'little','right','big','high','old','small','large','next','early',\n  'while','around','another','going','keep','set','never','point',\n  'worth','crossing','city','soups','dishes','foods','recipes','types',\n  'kinds','ways','reasons','things','facts','secrets','ideas','options',\n  'choices','picks','favorites','classics','versions','styles','places',\n  'spots','examples','list','ultimate','complete','simple','easy',\n  'popular','famous','world','global','international','regional','local'\n]);\n\n// LAYER 1: Category → visual style + image tone\nfunction resolveCategory(rawCategory, postTitle) {\n  const cat = (rawCategory || '').trim().toLowerCase();\n  if (cat.includes('soup') || cat.includes('stew')) return 'soups_stews';\n  if (cat.includes('pantry') || cat.includes('storage')) return 'pantry_storage';\n  if (cat.includes('history')) return 'food_history';\n  if (cat.includes('kitchen') || cat.includes('tip')) return 'kitchen_tips';\n  if (cat.includes('recipe')) return 'recipes';\n  // Fallback to title if category column is empty\n  const t = (postTitle || '').toLowerCase();\n  if (/(soup|stew|broth|bisque|chowder|sinigang|pozole|ramen|pho|bouillabaisse)/.test(t)) return 'soups_stews';\n  if (/(pantry|storage|preserve|jar|shelf|freezer|store|keeping|keep)/.test(t)) return 'pantry_storage';\n  if (/(history|origin|ancient|traditional|century|invented|first|oldest|began)/.test(t)) return 'food_history';\n  if (/(tip|trick|hack|save money|kitchen|habit|mistake|avoid|skill|tool)/.test(t)) return 'kitchen_tips';\n  return 'recipes';\n}\n\n// Visual style per category — appended to queries\nconst CATEGORY_VISUAL = {\n  soups_stews:    { primary: 'bowl steam overhead',       secondary: 'warm bowl food',        fallback: 'soup food'         },\n  pantry_storage: { primary: 'jar shelf organized',       secondary: 'storage kitchen pantry', fallback: 'pantry food'       },\n  food_history:   { primary: 'rustic vintage traditional',secondary: 'heritage classic wooden', fallback: 'traditional food'  },\n  kitchen_tips:   { primary: 'kitchen preparation close up', secondary: 'cooking technique',   fallback: 'kitchen food'      },\n  recipes:        { primary: 'plated overhead food photography', secondary: 'dish close up fresh', fallback: 'food dish'     }\n};\n\n// LAYER 2: Title → food subject (what kind of food is this article about)\nfunction extractFoodSubjectFromTitle(postTitle) {\n  const t = (postTitle || '').toLowerCase();\n  const subjectMap = [\n    [/(soup|soups|broth|bisque|chowder|consomm|bouillabaisse|gazpacho|borscht|sinigang|pozole|pho|ramen|laksa|minestrone|goulash)/, 'soup'],\n    [/(stew|stews|braise|braised|tagine|cassoulet|hotpot|pot roast)/, 'stew'],\n    [/(noodle|noodles|pasta|spaghetti|fettuccine|udon|soba|pad thai|lo mein|vermicelli)/, 'noodle'],\n    [/(rice|biryani|risotto|paella|congee|porridge|pilaf|fried rice)/, 'rice'],\n    [/(bread|loaf|baguette|croissant|sourdough|focaccia|pastry|bun|roll)/, 'bread'],\n    [/(breakfast|brunch|egg|bacon|pancake|waffle|omelette|oatmeal)/, 'breakfast'],\n    [/(burger|sandwich|wrap|taco|burrito|hotdog|sub)/, 'sandwich'],\n    [/(cake|dessert|pie|tart|cookie|brownie|chocolate|pudding|ice cream|donut|sweet)/, 'dessert'],\n    [/(curry|curries|masala|korma|tikka|dal|vindaloo)/, 'curry'],\n    [/(salad|slaw|greens|caesar|caprese)/, 'salad'],\n    [/(seafood|fish|shrimp|crab|lobster|oyster|salmon|tuna|clam|mussel|squid)/, 'seafood'],\n    [/(steak|beef|pork|chicken|lamb|roast|grill|bbq|barbecue|ribs|brisket)/, 'meat'],\n    [/(pizza|flatbread|calzone)/, 'pizza'],\n    [/(dumpling|gyoza|pierogi|empanada|samosa|dim sum|bao|wonton)/, 'dumpling'],\n    [/(kimchi|pickle|ferment|sauerkraut|miso|kombucha|preserve)/, 'fermented food'],\n    [/(cocktail|drink|smoothie|juice|coffee|tea|beverage)/, 'drink'],\n    [/(jar|pantry|spice|herb|storage|shelf|freezer|ingredient)/, 'pantry ingredient'],\n    [/(knife|cutting|tool|technique|skill|chop|dice|mince|prep)/, 'kitchen preparation'],\n  ];\n  for (const [pattern, subject] of subjectMap) {\n    if (pattern.test(t)) return subject;\n  }\n  // Extract first meaningful noun from title after stripping number\n  const words = (postTitle || '').replace(/^\\d+\\s+/, '').toLowerCase().split(/\\s+/);\n  const meaningful = words.find(w => w.length > 3 && !STOP_WORDS.has(w));\n  return meaningful || 'food';\n}\n\n// LAYER 3: Heading → specific dish/subject for this image slot\nfunction extractSubjectFromHeading(heading) {\n  return heading\n    .replace(/\\s*\\([^)]*\\)/g, '')  // strip parentheticals\n    .replace(/,.*$/, '')              // strip after comma\n    .trim();\n}\n\n// LAYER 4: Section content → contextual detail keywords\nfunction extractSectionKeywords(sectionContent) {\n  return (sectionContent || '')\n    .toLowerCase()\n    .replace(/[^\\w\\s]/g, ' ')\n    .split(/\\s+/)\n    .filter(w => w.length > 3 && !STOP_WORDS.has(w))\n    .slice(0, 3);\n}\n\nfor (const item of $input.all()) {\n  const rawCategory  = item.json['CATEGORY'] || item.json.category || '';\n  const postTitle    = item.json.postTitle || '';\n  const heading      = item.json.heading || '';\n  const sectionContent = item.json.sectionContent || '';\n\n  // LAYER 1: category\n  const articleCategory = resolveCategory(rawCategory, postTitle);\n  const visual = CATEGORY_VISUAL[articleCategory];\n\n  // LAYER 2: food subject from title\n  const titleSubject = extractFoodSubjectFromTitle(postTitle);\n\n  // LAYER 3: specific subject from heading\n  const headingSubject = extractSubjectFromHeading(heading);\n\n  // LAYER 4: detail keywords from section content\n  const sectionKeywords = extractSectionKeywords(sectionContent);\n  const sectionHint = sectionKeywords[0] || '';\n\n  // Build 3 queries: most specific → broader → broadest fallback\n  const q1 = `${headingSubject} ${visual.primary}`.trim();\n  const q2 = `${titleSubject} ${headingSubject} ${visual.secondary}`.trim();\n  const q3 = `${titleSubject} ${sectionHint} ${visual.fallback}`.trim().replace(/\\s+/g, ' ');\n\n  const queries = [q1, q2, q3]\n    .map(q => q.trim())\n    .filter((q, i, arr) => q && arr.indexOf(q) === i);\n\n  console.log(`[${articleCategory}] \"${heading}\"`);\n  console.log(`  Layer2 subject: \"${titleSubject}\" | Layer3: \"${headingSubject}\" | Layer4: \"${sectionHint}\"`);\n  console.log(`  Q1: ${q1}`);\n  console.log(`  Q2: ${q2}`);\n  console.log(`  Q3: ${q3}`);\n\n  for (let i = 0; i < queries.length; i++) {\n    results.push({\n      json: {\n        ...item.json,\n        searchQuery: queries[i],\n        queryType: i === 0 ? 'primary' : 'fallback',\n        queryIndex: i,\n        articleCategory,\n        categoryVisual: visual,\n        _headingKey: item.json.postId + '|||' + heading\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "ccc8606d-5338-493b-99ca-5a74e1bd71a9",
+      "name": "Generate All Search Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        18464,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.unsplash.com/search/photos?query=' + encodeURIComponent($json.searchQuery) + '&per_page=10&orientation=landscape' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Client-ID cD9rpz_Wqaw3BnpcRKo9gLmGol-RhYOp91BTfKSQAUk"
+            },
+            {
+              "name": "Accept-Version",
+              "value": "v1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e4b6bbae-77ed-4abc-a9ee-07403d545e1c",
+      "name": "Search Unsplash",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        18736,
+        8576
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// GROUP ALL SEARCH RESULTS BY HEADING\n// Each input item carries _headingKey + photos[] already normalized + tagged with source\n// No positional indexing needed — just group by _headingKey\n\nconst FOOD_POSITIVE = [\n  'food','dish','meal','plate','bowl','soup','cook','kitchen','recipe',\n  'eat','dining','cuisine','restaurant','ingredient','spice',\n  'noodle','rice','bread','meat','fish','vegetable','fruit','dessert',\n  'breakfast','lunch','dinner','broth','stew','curry','salad',\n  'pasta','seafood','grill','bake','roast','fry','steam','sauce',\n  'close up','overhead','flat lay','wooden','white background'\n];\n\nconst FOOD_NEGATIVE = [\n  'people','person','man','woman','men','women','portrait','face',\n  'street','city','building','architecture','car','road',\n  'crowd','tourist','travel','landscape','mountain','beach',\n  'temple','church','flag','worker','sitting','standing','walking',\n  'market stall','shop front','vendor'\n];\n\nfunction scoreFoodRelevance(photo, heading) {\n  const text = [\n    photo.alt_description || '',\n    photo.description || '',\n    Array.isArray(photo._tags) ? photo._tags.join(' ') : (photo._tags || '')\n  ].join(' ').toLowerCase();\n\n  let score = 0;\n\n  // Food keyword bonus\n  for (const w of FOOD_POSITIVE) if (text.includes(w)) score += 3;\n  // Non-food penalty\n  for (const w of FOOD_NEGATIVE) if (text.includes(w)) score -= 8;\n\n  // Heading keyword match — strip parentheticals first\n  const cleanHeading = heading.replace(/\\s*\\([^)]*\\)/g, '').toLowerCase();\n  const stopWords = new Set(['the','a','an','and','or','in','on','at','to','for','of','with','is','are']);\n  const keywords = cleanHeading.split(/\\W+/).filter(w => w.length > 2 && !stopWords.has(w));\n  for (const kw of keywords) {\n    if (text.includes(kw)) score += 4;\n  }\n\n  if ((photo.width || 1) > (photo.height || 1)) score += 1;\n\n  return score;\n}\n\n// Group by _headingKey\nconst headingMap = new Map();\n\nfor (const item of $input.all()) {\n  const key = item.json._headingKey;\n  const photos = item.json.photos || [];\n  const source = item.json._source || 'unknown';\n\n  if (!key) continue;\n\n  if (!headingMap.has(key)) {\n    headingMap.set(key, {\n      heading: item.json.heading,\n      postId: item.json.postId,\n      postContent: item.json.postContent,\n      postTitle: item.json.postTitle || '',\n      photos: [],\n      sourceCount: { unsplash: 0, pexels: 0, pixabay: 0 }\n    });\n  }\n\n  const data = headingMap.get(key);\n  data.photos.push(...photos);\n  data.sourceCount[source] = (data.sourceCount[source] || 0) + photos.length;\n}\n\nconst output = [];\n\nfor (const [key, data] of headingMap.entries()) {\n  if (data.photos.length > 0) {\n    const scored = data.photos\n      .map(photo => ({ photo, score: scoreFoodRelevance(photo, data.heading) }))\n      .sort((a, b) => b.score - a.score);\n\n    const foodPhotos = scored.filter(s => s.score > 0);\n    const topPhotos = (foodPhotos.length > 0 ? foodPhotos : scored).slice(0, 15).map(s => s.photo);\n\n    const sc = data.sourceCount;\n    console.log(`${data.heading}: ${data.photos.length} photos (U:${sc.unsplash} P:${sc.pexels} X:${sc.pixabay}), best score ${scored[0].score} from ${scored[0].photo.source} — \"${scored[0].photo.alt_description?.slice(0,50)}\"`);\n\n    output.push({\n      json: {\n        heading: data.heading,\n        postId: data.postId,\n        postContent: data.postContent,\n        valid: true,\n        results: topPhotos,\n        totalFound: data.photos.length\n      }\n    });\n  } else {\n    const retryQuery = data.heading.replace(/\\s*\\([^)]*\\)/g, '').split(/\\s+/).slice(0, 2).join(' ') + ' food';\n    output.push({\n      json: {\n        heading: data.heading,\n        postId: data.postId,\n        postContent: data.postContent,\n        valid: false,\n        results: [],\n        totalFound: 0,\n        retryQuery\n      }\n    });\n    console.log(`${data.heading}: no photos from any source. Retry: ${retryQuery}`);\n  }\n}\n\nreturn output;"
+      },
+      "id": "0de47e6f-062e-43b4-a566-8ff9feb70639",
+      "name": "Group Results by Heading",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19296,
+        8704
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "193409b9-2737-4c61-b2b8-5f49d29e00a4",
+      "name": "If Valid Results",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        19296,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PICK BEST IMAGES — processes all headings together so no two headings\n// in the same article get the same image URL.\n\nconst FOOD_POSITIVE = [\n  'food','dish','meal','plate','bowl','soup','cook','kitchen','recipe',\n  'eat','dining','cuisine','restaurant','ingredient','flavor','spice',\n  'noodle','rice','bread','meat','fish','vegetable','fruit','dessert',\n  'breakfast','lunch','dinner','snack','street food','market','chef',\n  'broth','stew','curry','salad','pasta','seafood','grill','bake',\n  'roast','fry','steam','boil','sauce','garnish','herb','fresh'\n];\n\nconst FOOD_NEGATIVE = [\n  'people','person','man','woman','men','women','portrait','face',\n  'street','city','building','architecture','car','road',\n  'crowd','tourist','travel','landscape','nature',\n  'mountain','beach','temple','church','mosque','flag',\n  'worker','labor','sitting','standing','walking','smiling'\n];\n\nfunction scorePhoto(photo, heading) {\n  const text = [\n    photo.alt_description || '',\n    photo.description || '',\n    (photo._tags || []).map(t => (typeof t === 'object' ? t.title : t) || '').join(' ')\n  ].join(' ').toLowerCase();\n\n  let score = 0;\n\n  for (const w of FOOD_POSITIVE) { if (text.includes(w)) score += 3; }\n  for (const w of FOOD_NEGATIVE) { if (text.includes(w)) score -= 5; }\n\n  // Keyword match from heading (strip country/location in parens)\n  const cleanHeading = heading.replace(/\\s*\\([^)]*\\)/g, '').toLowerCase();\n  const stopWords = new Set(['the','a','an','and','or','in','on','at','to','for','of','with','is','are']);\n  const keywords = cleanHeading.split(/\\W+/).filter(w => w.length > 2 && !stopWords.has(w));\n  for (const kw of keywords) { if (text.includes(kw)) score += 4; }\n\n  if ((photo.width || 1) > (photo.height || 1)) score += 1;\n  return score;\n}\n\n// Collect all heading result sets, keeping their order\nconst allItems = $input.all();\nconst usedImageUrls = new Set();  // shared across ALL headings in this article\nconst results = [];\n\nfor (const item of allItems) {\n  const photos = item.json.results || [];\n  const heading = item.json.heading;\n  const postId = item.json.postId;\n  const postContent = item.json.postContent;\n\n  if (photos.length === 0) continue;\n\n  // Score all candidates\n  const scored = photos\n    .map(photo => ({ photo, score: scorePhoto(photo, heading) }))\n    .sort((a, b) => b.score - a.score);\n\n  // Pick the highest-scoring image that hasn't been used yet\n  let picked = null;\n  for (const { photo, score } of scored) {\n    const url = photo.imageUrl || '';\n    if (url && !usedImageUrls.has(url)) {\n      picked = { photo, score };\n      break;\n    }\n  }\n\n  // If all candidates were already used (very unlikely), take the best anyway\n  if (!picked) picked = scored[0];\n\n  const best = picked.photo;\n  usedImageUrls.add(best.imageUrl || '');\n\n  const alternatives = scored\n    .filter(s => (s.photo.imageUrl || '') !== (best.imageUrl || ''))\n    .slice(0, 10)\n    .map(s => ({\n      url: s.photo.imageUrl || '',\n      alt: s.photo.alt_description || '',\n      author: s.photo.authorName || s.photo.source || '',\n      source: s.photo.source || '',\n      score: s.score\n    }));\n\n  results.push({\n    json: {\n      imageUrl: best.imageUrl || '',\n      authorName: best.authorName || best.source || 'Photo',\n      authorUrl: best.authorUrl || '#',\n      photoSource: best.source || 'Unsplash',\n      heading,\n      isFallback: false,\n      alt_description: best.alt_description || '',\n      description: best.description || '',\n      postId,\n      postContent,\n      bestScore: picked.score,\n      alternatives: JSON.stringify(alternatives)\n    }\n  });\n\n  console.log(`${heading}: picked \"${best.alt_description?.slice(0,50)}\" (score ${picked.score}, src ${best.source})`);\n}\n\nreturn results;"
+      },
+      "id": "cb90ffd9-f6f4-4211-a651-33a051038ec5",
+      "name": "Pick Best Images",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19584,
+        8448
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.unsplash.com/search/photos?query=' + encodeURIComponent($json.retryQuery) + '&per_page=15&orientation=landscape' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Client-ID cD9rpz_Wqaw3BnpcRKo9gLmGol-RhYOp91BTfKSQAUk"
+            },
+            {
+              "name": "Accept-Version",
+              "value": "v1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "430be99b-922c-4bcf-b1ed-871ee53f52c5",
+      "name": "Keyword Retry Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        19584,
+        8800
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// FORMAT FALLBACK IMAGE from tagged retry results\n// Input items carry _headingKey + photos[] already normalized\n\nconst results = [];\n\n// Group by headingKey\nconst headingMap = new Map();\n\nfor (const item of $input.all()) {\n  const key = item.json._headingKey;\n  if (!key) continue;\n  if (!headingMap.has(key)) {\n    headingMap.set(key, {\n      heading: item.json.heading,\n      postId: item.json.postId,\n      postContent: item.json.postContent,\n      photos: []\n    });\n  }\n  headingMap.get(key).photos.push(...(item.json.photos || []));\n}\n\nconst defaultImages = [\n  { url: 'https://images.unsplash.com/photo-1490645935967-10de6ba17061?w=1000&h=672&fit=crop', author: 'Brooke Lark', source: 'Unsplash' },\n  { url: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=1000&h=672&fit=crop', author: 'Lily Banse', source: 'Unsplash' },\n  { url: 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=1000&h=672&fit=crop', author: 'Anna Pelzer', source: 'Unsplash' }\n];\n\nlet di = 0;\nfor (const [key, data] of headingMap.entries()) {\n  const photo = data.photos[0];\n  if (photo) {\n    results.push({\n      json: {\n        heading: data.heading,\n        imageUrl: photo.imageUrl,\n        authorName: photo.authorName,\n        authorUrl: photo.authorUrl,\n        photoSource: photo.source,\n        alt_description: photo.alt_description || '',\n        description: photo.description || '',\n        isFallback: true,\n        postId: data.postId,\n        postContent: data.postContent,\n        alternatives: '[]'\n      }\n    });\n    console.log(`Retry OK: ${data.heading} via ${photo.source}`);\n  } else {\n    const def = defaultImages[di++ % defaultImages.length];\n    results.push({\n      json: {\n        heading: data.heading,\n        imageUrl: def.url,\n        authorName: def.author,\n        authorUrl: 'https://unsplash.com',\n        photoSource: def.source,\n        alt_description: data.heading || 'food',\n        description: '',\n        isFallback: true,\n        postId: data.postId,\n        postContent: data.postContent,\n        alternatives: '[]'\n      }\n    });\n    console.log(`Retry FAILED: ${data.heading} — using food fallback`);\n  }\n}\n\nreturn results;"
+      },
+      "id": "0b8dae39-60ff-44e3-8c02-0e1fed2d3a9c",
+      "name": "Format Fallback Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19872,
+        8800
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "85544dff-954d-4195-8ccb-46a0d40efeff",
+      "name": "Merge Images",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        20144,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// NO DUPLICATE IMAGE SELECTION — article-scoped\n// Ensures no two headings within the same article share the same image URL.\n// Tracks used URLs per postId. Falls back through alternatives if primary is taken.\n// Passes postTitle through for featured image search downstream.\n\nconst usedByPost = new Map(); // postId -> Set of used imageUrls\nconst result = [];\n\nconst FOOD_POSITIVE = [\n  'food','dish','meal','plate','bowl','soup','cook','kitchen','recipe',\n  'eat','dining','cuisine','ingredient','spice','noodle','rice','bread',\n  'meat','fish','vegetable','fruit','dessert','breakfast','lunch','dinner',\n  'broth','stew','curry','salad','pasta','seafood','grill','bake','roast',\n  'fry','steam','sauce'\n];\nconst FOOD_NEGATIVE = [\n  'people','person','man','woman','men','women','portrait','face',\n  'street','city','building','architecture','car','road','crowd',\n  'tourist','travel','landscape','mountain','beach','temple','church',\n  'flag','worker','sitting','standing','walking'\n];\n\nfunction scoreFoodRelevance(alt, desc) {\n  const text = ((alt || '') + ' ' + (desc || '')).toLowerCase();\n  let score = 0;\n  for (const w of FOOD_POSITIVE) if (text.includes(w)) score += 3;\n  for (const w of FOOD_NEGATIVE) if (text.includes(w)) score -= 5;\n  return score;\n}\n\nfor (const item of $input.all()) {\n  const postId = item.json.postId;\n  const heading = item.json.heading;\n  const postTitle = item.json.postTitle || '';\n\n  if (!usedByPost.has(postId)) usedByPost.set(postId, new Set());\n  const usedUrls = usedByPost.get(postId);\n\n  // Build candidate list: primary first, then alternatives\n  let alternatives = [];\n  try { alternatives = JSON.parse(item.json.alternatives || '[]'); } catch(e) {}\n\n  const candidates = [\n    {\n      url: item.json.imageUrl,\n      alt: item.json.alt_description || '',\n      desc: item.json.description || '',\n      authorName: item.json.authorName,\n      authorUrl: item.json.authorUrl,\n      photoSource: item.json.photoSource || 'Unsplash'\n    },\n    ...alternatives.map(a => ({\n      url: a.url || '',\n      alt: a.alt || '',\n      desc: a.alt || '',\n      authorName: a.author || a.authorName || 'Photo',\n      authorUrl: a.authorUrl || '#',\n      photoSource: a.source || a.photoSource || 'Unsplash'\n    }))\n  ].filter(c => c.url);\n\n  // First pass: unused + positive food score\n  let chosen = null;\n  for (const c of candidates) {\n    if (!usedUrls.has(c.url) && scoreFoodRelevance(c.alt, c.desc) > 0) {\n      chosen = c; break;\n    }\n  }\n  // Second pass: unused, any score\n  if (!chosen) {\n    for (const c of candidates) {\n      if (!usedUrls.has(c.url)) { chosen = c; break; }\n    }\n  }\n  // Last resort\n  if (!chosen) {\n    chosen = candidates[0];\n    console.log(`WARNING: ${heading} — all candidates used, reusing primary`);\n  }\n\n  usedUrls.add(chosen.url);\n\n  result.push({\n    json: {\n      ...item.json,\n      imageUrl: chosen.url,\n      authorName: chosen.authorName,\n      authorUrl: chosen.authorUrl,\n      photoSource: chosen.photoSource,\n      alt_description: chosen.alt,\n      description: chosen.desc,\n      postTitle  // pass through for featured image search\n    }\n  });\n\n  console.log(`${heading} (post ${postId}): ${chosen.url.slice(0,60)}...`);\n}\n\nreturn result;"
+      },
+      "id": "91087022-24da-403a-abab-5e4f7861fe7e",
+      "name": "No Duplicate Image Selection",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20432,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Group images by postId - output one item per unique postId\nconst postMap = new Map();\n\nfor (const item of $input.all()) {\n  const postId = item.json.postId;\n  if (!postMap.has(postId)) {\n    postMap.set(postId, {\n      postId: postId,\n      images: []\n    });\n  }\n  postMap.get(postId).images.push({\n    heading: item.json.heading,\n    imageUrl: item.json.imageUrl,\n    authorName: item.json.authorName,\n    authorUrl: item.json.authorUrl,\n    photoSource: item.json.photoSource || 'Unsplash'\n  });\n}\n\nreturn Array.from(postMap.values()).map(data => ({\n  json: data\n}));"
+      },
+      "id": "d9abad2d-0683-435c-bfd4-38db0a2e0a62",
+      "name": "Prepare Post Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20704,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://spoonandgrain.com/wp-json/wp/v2/posts/{{ $json.postId }}?context=edit",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "options": {}
+      },
+      "id": "6a7c65c8-8456-41f5-9446-618a42f03e47",
+      "name": "Fetch Fresh Post Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        20992,
+        8576
+      ],
+      "credentials": {
+        "wordpressApi": {
+          "id": "Pa6V4FkHzOYkAAPx",
+          "name": "Wordpress account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Replace UNSPLASH placeholder markers with actual images\n\nconst results = [];\nconst prepItems = $('Prepare Post Updates').all();\n\nfor (const item of $input.all()) {\n  const postId = String(item.json.id);\n  const content_raw = item.json.content?.raw || '';\n  \n  const prepItem = prepItems.find(p => String(p.json.postId) === postId);\n  \n  if (!prepItem) {\n    console.log('No prep data for post ' + postId);\n    continue;\n  }\n  \n  const images = prepItem.json.images || [];\n  \n  if (!content_raw.includes('UNSPLASH:START')) {\n    console.log('No markers in post ' + postId);\n    continue;\n  }\n  \n  let content = content_raw;\n  let replacedCount = 0;\n\n  for (const img of images) {\n    const heading = img.heading;\n    const sourceLabel = img.photoSource || 'Unsplash';\n    const credit = 'Photo by ' + img.authorName + ' on ' + sourceLabel;\n    \n    const newBlock = '<!-- wp:image {\"sizeSlug\":\"full\",\"linkDestination\":\"none\",\"align\":\"center\"} -->\\n' +\n      '<figure class=\"wp-block-image aligncenter size-full\">' +\n      '<img src=\"' + img.imageUrl + '\" alt=\"' + heading + '\" />' +\n      '<figcaption class=\"wp-element-caption\">' + credit + '</figcaption>' +\n      '</figure>\\n' +\n      '<!-- /wp:image -->';\n    \n    const startMarker = '<!-- UNSPLASH:START:' + heading + ' -->';\n    const endMarker = '<!-- UNSPLASH:END:' + heading + ' -->';\n    \n    const startIdx = content.indexOf(startMarker);\n    const endIdx = content.indexOf(endMarker);\n    \n    if (startIdx >= 0 && endIdx >= 0) {\n      const fullEndIdx = endIdx + endMarker.length;\n      \n      let replaceStart = startIdx;\n      let replaceEnd = fullEndIdx;\n      \n      const beforeStart = content.substring(Math.max(0, startIdx - 50), startIdx);\n      const wpHtmlStart = beforeStart.lastIndexOf('<!-- wp:html -->');\n      if (wpHtmlStart >= 0) {\n        replaceStart = startIdx - (beforeStart.length - wpHtmlStart);\n      }\n      \n      const afterEnd = content.substring(fullEndIdx, fullEndIdx + 50);\n      const wpHtmlEnd = afterEnd.indexOf('<!-- /wp:html -->');\n      if (wpHtmlEnd >= 0) {\n        replaceEnd = fullEndIdx + wpHtmlEnd + '<!-- /wp:html -->'.length;\n      }\n      \n      content = content.substring(0, replaceStart) + newBlock + content.substring(replaceEnd);\n      replacedCount++;\n      console.log('Replaced: ' + heading);\n    } else {\n      console.log('NOT FOUND: ' + heading);\n    }\n  }\n\n  if (replacedCount > 0) {\n    results.push({\n      json: {\n        postId: postId,\n        updatedContent: content,\n        imagesReplaced: replacedCount\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  throw new Error('No images replaced. Check markers.');\n}\n\nreturn results;"
+      },
+      "id": "4d04726d-0c44-43d1-911b-5c3bae3fb0b3",
+      "name": "Replace Placeholders with Images",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        21264,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://spoonandgrain.com/wp-json/wp/v2/posts/{{$json.postId}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "content",
+              "value": "={{$json.updatedContent}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0d744e3c-4100-4cc8-8aca-8f9d1654cfba",
+      "name": "Update WordPress Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        21552,
+        8576
+      ],
+      "credentials": {
+        "wordpressApi": {
+          "id": "Pa6V4FkHzOYkAAPx",
+          "name": "Wordpress account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.pexels.com/v1/search?query=' + encodeURIComponent($json.searchQuery) + '&per_page=10&orientation=landscape' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "YOUR_PEXELS_API_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "93093cbf-46d6-49f6-963f-b456d0af3f1a",
+      "name": "Search Pexels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        18736,
+        8800
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://pixabay.com/api/?key=YOUR_PIXABAY_API_KEY&q=' + encodeURIComponent($json.searchQuery) + '&image_type=photo&orientation=horizontal&per_page=10&category=food' }}",
+        "options": {}
+      },
+      "id": "532b06ed-7382-41d5-a2cd-0d19b8dcdcd8",
+      "name": "Search Pixabay",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        18736,
+        9024
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "6225dd65-8688-4417-8447-39c602fc6c3d",
+      "name": "Merge All Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        19024,
+        8800
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.pexels.com/v1/search?query=' + encodeURIComponent($json.retryQuery) + '&per_page=15&orientation=landscape' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "SbdMtgweLMgNbDpB94MGruEVqWvJqlmzaHR0ThbWtMTCcNv4copDZa6d"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1459e857-5782-4d99-8c67-cb59f8772dc8",
+      "name": "Keyword Retry Pexels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        19584,
+        9024
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://pixabay.com/api/?key=55479991-94e31434e0715f76475714c5a&q=' + encodeURIComponent($json.retryQuery) + '&image_type=photo&orientation=horizontal&per_page=15&category=food' }}",
+        "options": {}
+      },
+      "id": "6406f22e-d3df-48c9-bec8-6b92844ee904",
+      "name": "Keyword Retry Pixabay",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        19584,
+        9200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "8652df10-2394-4960-b405-2d9e0bbd53c4",
+      "name": "Merge Retry Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        19872,
+        9024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass featured image data straight through from Pick Featured Image\n// postId is already correct — no matching needed\n\nconst results = [];\n\nfor (const item of $input.all()) {\n  const url = item.json.featuredImageUrl || '';\n  if (!url) {\n    console.log(`Post ${item.json.postId}: no featuredImageUrl — skipping`);\n    continue;\n  }\n\n  const urlPath = url.split('?')[0];\n  const rawFilename = urlPath.split('/').pop() || 'featured.jpg';\n  const filename = /\\.(jpg|jpeg|png|webp)$/i.test(rawFilename) ? rawFilename : 'featured.jpg';\n\n  results.push({\n    json: {\n      postId: String(item.json.postId),\n      featuredImageUrl: url,\n      featuredAuthorName: item.json.featuredAuthorName || '',\n      featuredPhotoSource: item.json.featuredPhotoSource || 'Unsplash',\n      filename\n    }\n  });\n\n  console.log(`Post ${item.json.postId}: featured from ${item.json.featuredPhotoSource} — ${url.slice(0,70)}`);\n}\n\nreturn results;"
+      },
+      "id": "566ca375-d3aa-4052-a336-40ac96df0e40",
+      "name": "Extract Featured Image URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        21840,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json.featuredImageUrl}}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "18457151-c988-4f28-ba2a-86c5ac94a5cd",
+      "name": "Fetch Image Binary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        22112,
+        8576
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://spoonandgrain.com/wp-json/wp/v2/media",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Disposition",
+              "value": "={{\"attachment; filename=\\\"\" + $('Extract Featured Image URL').item.json.filename + \"\\\"\"}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "image/jpeg"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "7de62f11-876a-4589-8ede-dac733a5bc05",
+      "name": "Upload to WP Media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        22384,
+        8576
+      ],
+      "credentials": {
+        "wordpressApi": {
+          "id": "Pa6V4FkHzOYkAAPx",
+          "name": "Wordpress account 5"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://spoonandgrain.com/wp-json/wp/v2/posts/{{$('Extract Featured Image URL').item.json.postId}}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wordpressApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "featured_media",
+              "value": "={{$json.id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "64439fe7-dcfa-4587-b1f2-db88c80a27d3",
+      "name": "Set Featured Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        22656,
+        8576
+      ],
+      "credentials": {
+        "wordpressApi": {
+          "id": "Pa6V4FkHzOYkAAPx",
+          "name": "Wordpress account 5"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare featured image search — same cascade: CATEGORY → TITLE → HEADING → CONTENT\n// _postIdKey for reliable matching, variety cycling for same-day batches\n\nfunction resolveCategory(rawCategory, postTitle) {\n  const cat = (rawCategory || '').trim().toLowerCase();\n  if (cat.includes('soup') || cat.includes('stew')) return 'soups_stews';\n  if (cat.includes('pantry') || cat.includes('storage')) return 'pantry_storage';\n  if (cat.includes('history')) return 'food_history';\n  if (cat.includes('kitchen') || cat.includes('tip')) return 'kitchen_tips';\n  if (cat.includes('recipe')) return 'recipes';\n  const t = (postTitle || '').toLowerCase();\n  if (/(soup|stew|broth|bisque|chowder|sinigang|pozole|ramen|pho)/.test(t)) return 'soups_stews';\n  if (/(pantry|storage|preserve|jar|shelf|freezer|store|keep)/.test(t)) return 'pantry_storage';\n  if (/(history|origin|ancient|traditional|century|invented|first)/.test(t)) return 'food_history';\n  if (/(tip|trick|hack|save|kitchen|habit|mistake|avoid|skill|tool)/.test(t)) return 'kitchen_tips';\n  return 'recipes';\n}\n\nfunction extractFoodSubjectFromTitle(postTitle) {\n  const t = (postTitle || '').toLowerCase();\n  const subjectMap = [\n    [/(soup|soups|broth|bisque|chowder|sinigang|pozole|pho|ramen|minestrone|goulash)/, 'soup'],\n    [/(stew|stews|braise|tagine|hotpot|pot roast)/, 'stew'],\n    [/(noodle|pasta|spaghetti|udon|soba|pad thai|vermicelli)/, 'noodle'],\n    [/(rice|biryani|risotto|paella|congee|pilaf)/, 'rice'],\n    [/(bread|loaf|baguette|croissant|sourdough|focaccia)/, 'bread'],\n    [/(breakfast|brunch|egg|bacon|pancake|waffle|oatmeal)/, 'breakfast'],\n    [/(burger|sandwich|wrap|taco|burrito)/, 'sandwich'],\n    [/(cake|dessert|pie|cookie|brownie|chocolate|pudding|ice cream)/, 'dessert'],\n    [/(curry|masala|korma|tikka|dal)/, 'curry'],\n    [/(salad|slaw|greens)/, 'salad'],\n    [/(seafood|fish|shrimp|crab|lobster|salmon|tuna)/, 'seafood'],\n    [/(steak|beef|pork|chicken|lamb|roast|grill|bbq|ribs)/, 'meat'],\n    [/(pizza|flatbread)/, 'pizza'],\n    [/(jar|pantry|spice|storage|shelf|freezer|ingredient|preserve)/, 'pantry'],\n    [/(knife|cutting|tool|technique|skill|chop|prep)/, 'kitchen preparation'],\n  ];\n  for (const [pattern, subject] of subjectMap) {\n    if (pattern.test(t)) return subject;\n  }\n  const words = (postTitle || '').replace(/^\\d+\\s+/, '').toLowerCase().split(/\\s+/);\n  return words.find(w => w.length > 3) || 'food';\n}\n\nconst FEATURED_STYLE = {\n  soups_stews:    ['soup bowl steam overhead rustic wooden', 'broth bowl warm ladle food', 'soup food dish'],\n  pantry_storage: ['pantry jars organized shelf kitchen', 'spice jars storage containers', 'pantry food kitchen'],\n  food_history:   ['rustic vintage food traditional wooden table', 'heritage classic food rustic', 'traditional food dish'],\n  kitchen_tips:   ['kitchen cooking preparation overhead close up', 'cooking technique food prep', 'kitchen food preparation'],\n  recipes:        ['plated dish overhead food photography fresh', 'food dish close up colorful', 'food recipe dish']\n};\n\nconst postMap = new Map();\n\nfor (const item of $input.all()) {\n  const postId = item.json.postId;\n  if (!postMap.has(postId)) {\n    postMap.set(postId, {\n      postId,\n      postTitle: item.json.postTitle || '',\n      rawCategory: item.json['CATEGORY'] || item.json.category || '',\n      usedUrls: []\n    });\n  }\n  if (item.json.imageUrl) {\n    postMap.get(postId).usedUrls.push(item.json.imageUrl);\n  }\n}\n\nconst results = [];\nconst varietyTerms = ['rustic', 'colorful', 'fresh', 'traditional', 'homemade'];\nlet articleIndex = 0;\n\nfor (const [postId, data] of postMap.entries()) {\n  // LAYER 1: category\n  const articleCategory = resolveCategory(data.rawCategory, data.postTitle);\n  // LAYER 2: food subject from title\n  const titleSubject = extractFoodSubjectFromTitle(data.postTitle);\n  const variety = varietyTerms[articleIndex % varietyTerms.length];\n  articleIndex++;\n\n  const styleQueries = FEATURED_STYLE[articleCategory];\n\n  // Featured queries: category style + title subject + variety\n  const q1 = `${titleSubject} ${styleQueries[0]}`.trim();\n  const q2 = `${titleSubject} ${variety} ${styleQueries[1]}`.trim();\n  const q3 = styleQueries[2];\n\n  console.log(`Post ${postId} \"${data.postTitle}\" [cat: ${articleCategory}] subject: \"${titleSubject}\" variety: \"${variety}\"`);\n  console.log(`  Q1: ${q1}`);\n  console.log(`  Q2: ${q2}`);\n  console.log(`  Q3: ${q3}`);\n\n  for (let qi = 0; qi < 3; qi++) {\n    results.push({\n      json: {\n        postId,\n        postTitle: data.postTitle,\n        usedUrls: data.usedUrls,\n        featuredSearchQuery: [q1, q2, q3][qi],\n        _featuredKey: postId + '|||' + qi,\n        _postIdKey: postId,\n        _queryIndex: qi,\n        articleCategory\n      }\n    });\n  }\n}\n\nreturn results;"
+      },
+      "id": "bf0bc8fd-6de8-4e51-9f90-1c89ae2c66a0",
+      "name": "Prepare Featured Image Search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20432,
+        8400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.unsplash.com/search/photos?query=' + encodeURIComponent($json.featuredSearchQuery) + '&per_page=15&orientation=landscape' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Client-ID cD9rpz_Wqaw3BnpcRKo9gLmGol-RhYOp91BTfKSQAUk"
+            },
+            {
+              "name": "Accept-Version",
+              "value": "v1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "74cb20bf-928b-4e7a-913e-b405ad7e3eb6",
+      "name": "Featured Search Unsplash",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        20704,
+        8288
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.pexels.com/v1/search?query=' + encodeURIComponent($json.featuredSearchQuery) + '&per_page=15&orientation=landscape' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "YOUR_PEXELS_API_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2fbe156d-e28e-42e6-9eee-f5eba1e6677e",
+      "name": "Featured Search Pexels",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        20704,
+        8448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://pixabay.com/api/?key=YOUR_PIXABAY_API_KEY&q=' + encodeURIComponent($json.featuredSearchQuery) + '&image_type=photo&orientation=horizontal&per_page=15&category=food' }}",
+        "options": {}
+      },
+      "id": "dd463476-5b94-48ce-ab70-c89e6777d0bb",
+      "name": "Featured Search Pixabay",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        20704,
+        8608
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "0a3fa070-e015-42ff-9b8f-49171a75a26d",
+      "name": "Merge Featured Sources",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        20976,
+        8448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pick best featured image per article\n// Groups by postId, applies per-article usedUrls exclusion\n// Scores heavily on food subject match\n\nconst FOOD_POSITIVE = [\n  'food','dish','meal','plate','bowl','soup','cook','kitchen','recipe',\n  'eat','dining','cuisine','restaurant','ingredient','spice',\n  'noodle','rice','bread','meat','fish','vegetable','fruit','dessert',\n  'breakfast','lunch','dinner','broth','stew','curry','salad',\n  'pasta','seafood','grill','bake','roast','fry','steam','sauce',\n  'close up','overhead','flat lay','wooden','white background','table'\n];\n\nconst FOOD_NEGATIVE = [\n  'people','person','man','woman','men','women','portrait','face',\n  'street','city','building','architecture','car','road',\n  'crowd','tourist','travel','landscape','mountain','beach',\n  'temple','church','flag','worker','sitting','standing','walking',\n  'market stall','shop front','vendor'\n];\n\nfunction extractSubject(title) {\n  const t = (title || '').toLowerCase();\n  const subjects = [\n    'soup','broth','noodle','pasta','rice','biryani','bread','breakfast',\n    'steak','burger','chicken','beef','pork','seafood','fish','cake',\n    'dessert','pie','curry','salad','pizza','dumpling','kimchi','coffee',\n    'cocktail','casserole','stew','braise'\n  ];\n  for (const s of subjects) {\n    if (t.includes(s)) return s;\n  }\n  return '';\n}\n\nfunction scorePhoto(p, subject) {\n  const text = ((p.alt || '') + ' ' + (p.desc || '') + ' ' + (p.tags || '')).toLowerCase();\n  let score = 0;\n  if (subject && text.includes(subject)) score += 15; // strong subject match\n  for (const w of FOOD_POSITIVE) if (text.includes(w)) score += 2;\n  for (const w of FOOD_NEGATIVE) if (text.includes(w)) score -= 10;\n  return score;\n}\n\n// Group all tagged items by postId\nconst postMap = new Map();\n\nfor (const item of $input.all()) {\n  const postId = item.json.postId;\n  if (!postId) continue;\n\n  if (!postMap.has(postId)) {\n    postMap.set(postId, {\n      postId,\n      postTitle: item.json.postTitle || '',\n      // usedUrls is per-article — take from first item for this postId\n      usedUrls: new Set(item.json.usedUrls || []),\n      photos: []\n    });\n  }\n\n  // Add photos from this tagged response\n  const photos = item.json.photos || [];\n  postMap.get(postId).photos.push(...photos);\n}\n\nconst results = [];\n\nfor (const [postId, data] of postMap.entries()) {\n  const subject = extractSubject(data.postTitle);\n\n  console.log(`Post ${postId} \"${data.postTitle}\" — subject: \"${subject}\", ${data.photos.length} candidates, ${data.usedUrls.size} excluded`);\n\n  const candidates = data.photos\n    .filter(p => p.imageUrl && !data.usedUrls.has(p.imageUrl))\n    .map(p => ({ photo: p, score: scorePhoto(p, subject) }))\n    .sort((a, b) => b.score - a.score);\n\n  // Log top candidates for debugging\n  candidates.slice(0, 3).forEach(c =>\n    console.log(`  score ${c.score} [${c.photo.source}] \"${c.photo.alt?.slice(0,50)}\"`)\n  );\n\n  const goodOnes = candidates.filter(c => c.score > 0);\n  const chosen = (goodOnes.length > 0 ? goodOnes : candidates)[0]?.photo;\n\n  if (chosen) {\n    results.push({\n      json: {\n        postId,\n        featuredImageUrl: chosen.imageUrl,\n        featuredAuthorName: chosen.authorName,\n        featuredAuthorUrl: chosen.authorUrl,\n        featuredPhotoSource: chosen.source,\n        featuredAlt: chosen.alt || ''\n      }\n    });\n    console.log(`  -> CHOSEN [${chosen.source}]: \"${chosen.alt?.slice(0,60)}\"`);\n  } else {\n    console.log(`  -> No suitable featured image found for post ${postId}`);\n  }\n}\n\nreturn results;"
+      },
+      "id": "fab7d77d-351c-4e01-83bc-48ae744a5894",
+      "name": "Pick Featured Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        21248,
+        8448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize unsplash results\n// Passes _headingKey and normalized photos forward\n\nconst queryItems = $('Generate All Search Queries').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const queryInfo = queryItems[i]?.json || {};\n  const headingKey = queryInfo._headingKey || (queryInfo.postId + '|||' + queryInfo.heading);\n  const heading = queryInfo.heading || '';\n  const postId = queryInfo.postId || '';\n  const postContent = queryInfo.postContent || '';\n  const postTitle = queryInfo.postTitle || '';\n\n  const photos = responseJson.results || [];\n\n  function normalize(raw) {\n      if (!raw.urls) return null;\n      return {\n        imageUrl: raw.urls.raw ? raw.urls.raw + '&w=1000&h=672&fit=crop' : raw.urls.regular || '',\n        authorName: raw.user?.name || 'Unsplash',\n        authorUrl: raw.user?.links?.html || 'https://unsplash.com',\n        alt_description: raw.alt_description || '',\n        description: raw.description || '',\n        width: raw.width || 1, height: raw.height || 1,\n        likes: raw.likes || 0,\n        _tags: (raw.tags || []).map(t => t.title || ''),\n        source: 'Unsplash'\n      };\n  }\n\n  const normalized = photos.map(normalize).filter(p => p && p.imageUrl);\n\n  // Output one item per response, carrying all photos + heading key\n  results.push({\n    json: {\n      _headingKey: headingKey,\n      heading,\n      postId,\n      postContent,\n      postTitle,\n      _source: 'unsplash',\n      photos: normalized\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "e8a06611-ce6e-40ec-9675-13ca68db351e",
+      "name": "Tag Unsplash Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19024,
+        8400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize pexels results\n// Passes _headingKey and normalized photos forward\n\nconst queryItems = $('Generate All Search Queries').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const queryInfo = queryItems[i]?.json || {};\n  const headingKey = queryInfo._headingKey || (queryInfo.postId + '|||' + queryInfo.heading);\n  const heading = queryInfo.heading || '';\n  const postId = queryInfo.postId || '';\n  const postContent = queryInfo.postContent || '';\n  const postTitle = queryInfo.postTitle || '';\n\n  const photos = responseJson.photos || [];\n\n  function normalize(raw) {\n      if (!raw.src) return null;\n      return {\n        imageUrl: raw.src.large2x || raw.src.large || raw.src.original || '',\n        authorName: raw.photographer || 'Pexels',\n        authorUrl: raw.photographer_url || 'https://www.pexels.com',\n        alt_description: raw.alt || '',\n        description: raw.alt || '',\n        width: raw.width || 1, height: raw.height || 1,\n        likes: 0, _tags: [],\n        source: 'Pexels'\n      };\n  }\n\n  const normalized = photos.map(normalize).filter(p => p && p.imageUrl);\n\n  // Output one item per response, carrying all photos + heading key\n  results.push({\n    json: {\n      _headingKey: headingKey,\n      heading,\n      postId,\n      postContent,\n      postTitle,\n      _source: 'pexels',\n      photos: normalized\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "1230db4f-420c-4840-93ba-3086cf4f3e17",
+      "name": "Tag Pexels Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19024,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize pixabay results\n// Passes _headingKey and normalized photos forward\n\nconst queryItems = $('Generate All Search Queries').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const queryInfo = queryItems[i]?.json || {};\n  const headingKey = queryInfo._headingKey || (queryInfo.postId + '|||' + queryInfo.heading);\n  const heading = queryInfo.heading || '';\n  const postId = queryInfo.postId || '';\n  const postContent = queryInfo.postContent || '';\n  const postTitle = queryInfo.postTitle || '';\n\n  const photos = responseJson.hits || [];\n\n  function normalize(raw) {\n      if (!raw.webformatURL && !raw.largeImageURL) return null;\n      return {\n        imageUrl: raw.webformatURL || raw.largeImageURL || '',\n        authorName: raw.user || 'Pixabay',\n        authorUrl: `https://pixabay.com/users/${raw.user}-${raw.user_id}/`,\n        alt_description: raw.tags || '',\n        description: raw.tags || '',\n        width: raw.imageWidth || raw.webformatWidth || 1,\n        height: raw.imageHeight || raw.webformatHeight || 1,\n        likes: raw.likes || 0,\n        _tags: (raw.tags || '').split(',').map(t => t.trim()),\n        source: 'Pixabay'\n      };\n  }\n\n  const normalized = photos.map(normalize).filter(p => p && p.imageUrl);\n\n  // Output one item per response, carrying all photos + heading key\n  results.push({\n    json: {\n      _headingKey: headingKey,\n      heading,\n      postId,\n      postContent,\n      postTitle,\n      _source: 'pixabay',\n      photos: normalized\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "3b5e9466-5d4d-4eae-9600-82e98efedac1",
+      "name": "Tag Pixabay Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19024,
+        8800
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize unsplash retry results\nconst ifItems = $('If Valid Results').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const origData = ifItems[i]?.json || {};\n\n  const photos = (responseJson.results || []).map(r => r.urls ? ({ imageUrl: r.urls.raw ? r.urls.raw + '&w=1000&h=672&fit=crop' : r.urls.regular, authorName: r.user?.name || 'Unsplash', authorUrl: r.user?.links?.html || 'https://unsplash.com', alt_description: r.alt_description || '', description: r.description || '', width: r.width||1, height: r.height||1, likes: r.likes||0, _tags: (r.tags||[]).map(t=>t.title||''), source: 'Unsplash' }) : null).filter(Boolean);\n\n  results.push({\n    json: {\n      _headingKey: origData.postId + '|||' + origData.heading,\n      heading: origData.heading,\n      postId: origData.postId,\n      postContent: origData.postContent,\n      _source: 'unsplash',\n      photos\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "fdaa57ae-43cd-42ec-8664-de9c997cd48e",
+      "name": "Tag Retry Unsplash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19872,
+        8576
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize pexels retry results\nconst ifItems = $('If Valid Results').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const origData = ifItems[i]?.json || {};\n\n  const photos = (responseJson.photos || []).map(r => r.src ? ({ imageUrl: r.src.large2x||r.src.large||r.src.original||'', authorName: r.photographer||'Pexels', authorUrl: r.photographer_url||'https://www.pexels.com', alt_description: r.alt||'', description: r.alt||'', width: r.width||1, height: r.height||1, likes: 0, _tags: [], source: 'Pexels' }) : null).filter(Boolean);\n\n  results.push({\n    json: {\n      _headingKey: origData.postId + '|||' + origData.heading,\n      heading: origData.heading,\n      postId: origData.postId,\n      postContent: origData.postContent,\n      _source: 'pexels',\n      photos\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "c1fcd421-8d4d-456e-ad82-3ef79ee7877e",
+      "name": "Tag Retry Pexels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19872,
+        8800
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize pixabay retry results\nconst ifItems = $('If Valid Results').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const origData = ifItems[i]?.json || {};\n\n  const photos = (responseJson.hits || []).map(r => (r.webformatURL||r.largeImageURL) ? ({ imageUrl: r.webformatURL||r.largeImageURL||'', authorName: r.user||'Pixabay', authorUrl: `https://pixabay.com/users/${r.user}-${r.user_id}/`, alt_description: r.tags||'', description: r.tags||'', width: r.imageWidth||r.webformatWidth||1, height: r.imageHeight||r.webformatHeight||1, likes: r.likes||0, _tags: (r.tags||'').split(',').map(t=>t.trim()), source: 'Pixabay' }) : null).filter(Boolean);\n\n  results.push({\n    json: {\n      _headingKey: origData.postId + '|||' + origData.heading,\n      heading: origData.heading,\n      postId: origData.postId,\n      postContent: origData.postContent,\n      _source: 'pixabay',\n      photos\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "5fe652b1-b56c-4f38-b833-71aafaf093a9",
+      "name": "Tag Retry Pixabay",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        19872,
+        9024
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize unsplash featured search results\nconst prepItems = $('Prepare Featured Image Search').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const prepData = prepItems[i]?.json || {};\n\n  const photos = (responseJson.results || []).map(r => {\n    if (!r.urls) return null;\n    return { imageUrl: r.urls.raw ? r.urls.raw + '&w=1200&h=800&fit=crop' : r.urls.regular || '', authorName: r.user?.name || 'Unsplash', authorUrl: r.user?.links?.html || 'https://unsplash.com', alt: r.alt_description || '', desc: r.description || '', tags: (r.tags||[]).map(t=>t.title||'').join(' '), source: 'Unsplash' };\n  }).filter(Boolean);\n\n  results.push({\n    json: {\n      _featuredKey: prepData._featuredKey || prepData.postId,\n      postId: prepData.postId,\n      postTitle: prepData.postTitle || '',\n      usedUrls: prepData.usedUrls || [],\n      _source: 'unsplash',\n      _queryIndex: prepData._queryIndex || 0,\n      photos\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "cc54b0a5-c890-4ef8-b06b-3c36752a98c2",
+      "name": "Tag Featured Unsplash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20976,
+        8288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize pexels featured search results\nconst prepItems = $('Prepare Featured Image Search').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const prepData = prepItems[i]?.json || {};\n\n  const photos = (responseJson.photos || []).map(r => {\n    if (!r.src) return null;\n    return { imageUrl: r.src.large2x||r.src.large||r.src.original||'', authorName: r.photographer||'Pexels', authorUrl: r.photographer_url||'https://www.pexels.com', alt: r.alt||'', desc: '', tags: '', source: 'Pexels' };\n  }).filter(Boolean);\n\n  results.push({\n    json: {\n      _featuredKey: prepData._featuredKey || prepData.postId,\n      postId: prepData.postId,\n      postTitle: prepData.postTitle || '',\n      usedUrls: prepData.usedUrls || [],\n      _source: 'pexels',\n      _queryIndex: prepData._queryIndex || 0,\n      photos\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "6c77f20c-83a7-4410-a83a-17893ebc872a",
+      "name": "Tag Featured Pexels",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20976,
+        8448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tag and normalize pixabay featured search results\nconst prepItems = $('Prepare Featured Image Search').all();\nconst results = [];\n\nfor (let i = 0; i < $input.all().length; i++) {\n  const responseJson = $input.all()[i].json;\n  const prepData = prepItems[i]?.json || {};\n\n  const photos = (responseJson.hits || []).map(r => {\n    if (!r.webformatURL && !r.largeImageURL) return null;\n    return { imageUrl: r.webformatURL||r.largeImageURL||'', authorName: r.user||'Pixabay', authorUrl: `https://pixabay.com/users/${r.user}-${r.user_id}/`, alt: r.tags||'', desc: '', tags: r.tags||'', source: 'Pixabay' };\n  }).filter(Boolean);\n\n  results.push({\n    json: {\n      _featuredKey: prepData._featuredKey || prepData.postId,\n      postId: prepData.postId,\n      postTitle: prepData.postTitle || '',\n      usedUrls: prepData.usedUrls || [],\n      _source: 'pixabay',\n      _queryIndex: prepData._queryIndex || 0,\n      photos\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "35dda364-9dad-4536-81ca-a6d8daa635d3",
+      "name": "Tag Featured Pixabay",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20976,
+        8608
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "c8934447-71eb-4f4f-adfb-5f1ff80ee5b3",
+      "name": "Merge Featured Tagged",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        20976,
+        8320
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Config (Sheet1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Config (Sheet1)": {
+      "main": [
+        [
+          {
+            "node": "Extract Doc ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Doc ID": {
+      "main": [
+        [
+          {
+            "node": "Get Google Doc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Google Doc": {
+      "main": [
+        [
+          {
+            "node": "Convert Google Doc to Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert Google Doc to Blocks": {
+      "main": [
+        [
+          {
+            "node": "Build Gutenberg Blocks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gutenberg Blocks": {
+      "main": [
+        [
+          {
+            "node": "Create Draft Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Draft Post": {
+      "main": [
+        [
+          {
+            "node": "Extract Headers from Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Headers from Draft": {
+      "main": [
+        [
+          {
+            "node": "Generate All Search Queries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate All Search Queries": {
+      "main": [
+        [
+          {
+            "node": "Search Unsplash",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search Pexels",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search Pixabay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Unsplash": {
+      "main": [
+        [
+          {
+            "node": "Tag Unsplash Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Group Results by Heading": {
+      "main": [
+        [
+          {
+            "node": "If Valid Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Valid Results": {
+      "main": [
+        [
+          {
+            "node": "Pick Best Images",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Keyword Retry Search",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Keyword Retry Pexels",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Keyword Retry Pixabay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Best Images": {
+      "main": [
+        [
+          {
+            "node": "Merge Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword Retry Search": {
+      "main": [
+        [
+          {
+            "node": "Tag Retry Unsplash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Fallback Image": {
+      "main": [
+        [
+          {
+            "node": "Merge Images",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Images": {
+      "main": [
+        [
+          {
+            "node": "No Duplicate Image Selection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Duplicate Image Selection": {
+      "main": [
+        [
+          {
+            "node": "Prepare Post Updates",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Featured Image Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Post Updates": {
+      "main": [
+        [
+          {
+            "node": "Fetch Fresh Post Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Fresh Post Content": {
+      "main": [
+        [
+          {
+            "node": "Replace Placeholders with Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Placeholders with Images": {
+      "main": [
+        [
+          {
+            "node": "Update WordPress Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Pexels": {
+      "main": [
+        [
+          {
+            "node": "Tag Pexels Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Pixabay": {
+      "main": [
+        [
+          {
+            "node": "Tag Pixabay Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Sources": {
+      "main": [
+        [
+          {
+            "node": "Group Results by Heading",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword Retry Pexels": {
+      "main": [
+        [
+          {
+            "node": "Tag Retry Pexels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keyword Retry Pixabay": {
+      "main": [
+        [
+          {
+            "node": "Tag Retry Pixabay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Retry Sources": {
+      "main": [
+        [
+          {
+            "node": "Format Fallback Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Featured Image URL": {
+      "main": [
+        [
+          {
+            "node": "Fetch Image Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Image Binary": {
+      "main": [
+        [
+          {
+            "node": "Upload to WP Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to WP Media": {
+      "main": [
+        [
+          {
+            "node": "Set Featured Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Featured Image Search": {
+      "main": [
+        [
+          {
+            "node": "Featured Search Unsplash",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Featured Search Pexels",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Featured Search Pixabay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Featured Search Unsplash": {
+      "main": [
+        [
+          {
+            "node": "Tag Featured Unsplash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Featured Search Pexels": {
+      "main": [
+        [
+          {
+            "node": "Tag Featured Pexels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Featured Search Pixabay": {
+      "main": [
+        [
+          {
+            "node": "Tag Featured Pixabay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Featured Image": {
+      "main": [
+        [
+          {
+            "node": "Extract Featured Image URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Unsplash Results": {
+      "main": [
+        [
+          {
+            "node": "Merge All Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Pexels Results": {
+      "main": [
+        [
+          {
+            "node": "Merge All Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Tag Retry Unsplash": {
+      "main": [
+        [
+          {
+            "node": "Merge Retry Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Retry Pexels": {
+      "main": [
+        [
+          {
+            "node": "Merge Retry Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Tag Featured Unsplash": {
+      "main": [
+        [
+          {
+            "node": "Merge Featured Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Featured Pexels": {
+      "main": [
+        [
+          {
+            "node": "Merge Featured Sources",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Featured Tagged": {
+      "main": [
+        [
+          {
+            "node": "Pick Featured Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Featured Sources": {
+      "main": [
+        [
+          {
+            "node": "Pick Featured Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "89bedfc0-c456-4e46-8f6e-7062757b5add",
+  "meta": {
+    "instanceId": "ad03d3e8ced8d3b37b00034ae00d2b587343714304dea0cb22adc7a75ac989b5"
+  },
+  "id": "K5bRUPgusnsSyGyc3PIr3",
+  "tags": [
+    {
+      "updatedAt": "2026-02-05T15:12:54.875Z",
+      "createdAt": "2026-02-05T15:12:54.875Z",
+      "id": "EA6iiikCH3Xkykto",
+      "name": "Travelpug"
+    },
+    {
+      "updatedAt": "2026-04-16T12:36:30.860Z",
+      "createdAt": "2026-04-16T12:36:30.860Z",
+      "id": "GkbduzCESjMFuFRv",
+      "name": "Spoon and Grain"
+    }
+  ]
+}
